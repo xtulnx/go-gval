@@ -16,6 +16,11 @@ type Selector interface {
 	SelectGVal(c context.Context, key string) (interface{}, error)
 }
 
+type SelectorSafe interface {
+	// 如果有处理返回值，则返回 true，否则false交由默认处理
+	SelectGValSafe(c context.Context, key string) (interface{}, bool)
+}
+
 // Evaluable evaluates given parameter
 type Evaluable func(c context.Context, parameter interface{}) (interface{}, error)
 
@@ -97,6 +102,25 @@ func (p *Parser) Var(path ...Evaluable) Evaluable {
 	return p.selector(path)
 }
 
+// 对象引用
+func (*Parser)ObjectRef(e Evaluable) Evaluable {
+	return objectRef(e)
+}
+
+func objectRef(e Evaluable) Evaluable {
+	return func(c context.Context, o interface{}) (interface{}, error) {
+		return e(c, o)
+	}
+}
+
+var _objectRefNil = objectRef(nil)
+
+func (e Evaluable) IsObjectRef() bool {
+	pc := reflect.ValueOf(_objectRefNil).Pointer()
+	pe := reflect.ValueOf(e).Pointer()
+	return pc == pe
+}
+
 // Evaluables is a slice of Evaluable.
 type Evaluables []Evaluable
 
@@ -115,11 +139,28 @@ func (evs Evaluables) EvalStrings(c context.Context, parameter interface{}) ([]s
 
 func variable(path Evaluables) Evaluable {
 	return func(c context.Context, v interface{}) (interface{}, error) {
+		var err error
+
+		// 处理链式调用的初始对象
+		if len(path) > 0 && path[0].IsObjectRef() {
+			v, err = path[0](c, v)
+			if err != nil {
+				return nil, err
+			}
+			path = path[1:]
+		}
+
 		keys, err := path.EvalStrings(c, v)
 		if err != nil {
 			return nil, err
 		}
 		for i, k := range keys {
+			if o, ok := v.(SelectorSafe); ok {
+				if v1, ok := o.SelectGValSafe(c, k); ok {
+					v = v1
+					continue
+				}
+			}
 			switch o := v.(type) {
 			case Selector:
 				v, err = o.SelectGVal(c, k)

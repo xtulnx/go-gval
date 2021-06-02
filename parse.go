@@ -179,7 +179,13 @@ func parseIdent(c context.Context, p *Parser) (call string, alternative func() (
 					if err != nil {
 						return nil, err
 					}
-					return p.callEvaluable(fullname, p.Var(keys...), args...), nil
+					v := p.callEvaluable(fullname, p.Var(keys...), args...)
+					if p.Peek() == '.' { // 继续引用
+						fullname = fullname + "." + token
+						keys = []Evaluable{p.ObjectRef(v)}
+						continue
+					}
+					return v, nil
 				case '[':
 					key, err := p.ParseExpression(c)
 					if err != nil {
